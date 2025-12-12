@@ -1,0 +1,237 @@
+esp32:
+  board: wemos_d1_mini32
+  framework:
+    type: esp-idf
+
+esphome:
+  name: test-fuzzy
+
+  on_boot:
+    - priority: 300
+      then:
+        - lambda: |-
+            auto fuzzy = id(fuzzy_controller).get();
+            ESP_LOGV("fuzzy", "boot fuzzy: %#p", fuzzy);
+            
+            // ===================================================================
+            // 1. FUZZY SET DEFINITIONS (INPUTS)
+            // ===================================================================
+
+            // Input 1: temperature change rate (rate)
+            FuzzySet *heatup = new FuzzySet(0.1, 0.5, 20.0, 20.0);
+            FuzzySet *coarse = new FuzzySet(-0.2, -0.1, 0.1, 0.2);
+            FuzzySet *cooldown = new FuzzySet(-100.0, -1.5, -0.5, -0.1); 
+
+            FuzzyInput *change_rate = new FuzzyInput(1);
+            change_rate->addFuzzySet(heatup);
+            change_rate->addFuzzySet(coarse);
+            change_rate->addFuzzySet(cooldown);
+            fuzzy->addFuzzyInput(change_rate);
+
+            // Input 2: temperature error (target)
+            FuzzySet *colder = new FuzzySet(-180.0, -150.0, -30.0, -10.1);
+            FuzzySet *cold = new FuzzySet(-15, -9.9, -8, -3.5); 
+            FuzzySet *good = new FuzzySet(-4.5, -0.1, 0.1, 1);
+            FuzzySet *hot = new FuzzySet(2, 6, 200.0, 200.0); 
+
+            FuzzyInput *target = new FuzzyInput(2);
+            target->addFuzzySet(colder);
+            target->addFuzzySet(cold);
+            target->addFuzzySet(good);
+            target->addFuzzySet(hot);
+            fuzzy->addFuzzyInput(target);
+
+            // Output 1: heater power (power)
+            FuzzySet *off = new FuzzySet(-0.01, -0.001, 0.001, 0.01); 
+            FuzzySet *lower = new FuzzySet(0.0, 0.005, 0.005, 0.01);
+            FuzzySet *low = new FuzzySet(0.01, 0.025, 0.05, 0.1);
+            FuzzySet *mid = new FuzzySet(0.15, 0.17, 0.2, 0.25);
+            // FIX: Redefined 'high' to center the output closer to the physical maximum (0.5)
+            FuzzySet *high = new FuzzySet(0.4, 0.45, 0.5, 0.5);
+            
+            FuzzyOutput *power = new FuzzyOutput(1);
+            power->addFuzzySet(off);
+            power->addFuzzySet(lower);
+            power->addFuzzySet(low);
+            power->addFuzzySet(mid);
+            power->addFuzzySet(high);
+            fuzzy->addFuzzyOutput(power);
+
+            // ===================================================================
+            // 2. CONSEQUENTS (THEN POWER IS ...)
+            // ===================================================================
+
+            FuzzyRuleConsequent *then_high = new FuzzyRuleConsequent();
+            then_high->addOutput(high);
+            FuzzyRuleConsequent *then_mid = new FuzzyRuleConsequent();
+            then_mid->addOutput(mid);
+            FuzzyRuleConsequent *then_low = new FuzzyRuleConsequent();
+            then_low->addOutput(low);
+            FuzzyRuleConsequent *then_lower = new FuzzyRuleConsequent();
+            then_lower->addOutput(lower);
+            FuzzyRuleConsequent *then_off = new FuzzyRuleConsequent();
+            then_off->addOutput(off);
+
+            // ===================================================================
+            // 3. ANTECEDENTS AND RULES (4 x 3 = 12 Rules)
+            // ===================================================================
+
+            // --- Rows: rate IS heatup ---
+            FuzzyRuleAntecedent *R10_Ante = new FuzzyRuleAntecedent(); 
+            R10_Ante->joinWithAND(colder, heatup);
+            FuzzyRule *fuzzyRule10 = new FuzzyRule(10, R10_Ante, then_high);
+
+            FuzzyRuleAntecedent *R2_Ante = new FuzzyRuleAntecedent(); 
+            R2_Ante->joinWithAND(cold, heatup);
+            FuzzyRule *fuzzyRule2 = new FuzzyRule(2, R2_Ante, then_mid);
+
+            FuzzyRuleAntecedent *R11_Ante = new FuzzyRuleAntecedent(); 
+            R11_Ante->joinWithAND(good, heatup);
+            FuzzyRule *fuzzyRule11 = new FuzzyRule(11, R11_Ante, then_low);
+
+            FuzzyRuleAntecedent *R12_Ante = new FuzzyRuleAntecedent(); 
+            R12_Ante->joinWithAND(hot, heatup);
+            FuzzyRule *fuzzyRule12 = new FuzzyRule(12, R12_Ante, then_off);
+
+
+            // --- Rows: rate IS coarse ---
+            FuzzyRuleAntecedent *R1_Ante = new FuzzyRuleAntecedent(); 
+            R1_Ante->joinWithAND(colder, coarse);
+            FuzzyRule *fuzzyRule1 = new FuzzyRule(1, R1_Ante, then_high);
+
+            FuzzyRuleAntecedent *R8_Ante = new FuzzyRuleAntecedent(); 
+            R8_Ante->joinWithAND(cold, coarse);
+            FuzzyRule *fuzzyRule8 = new FuzzyRule(8, R8_Ante, then_high);
+
+            FuzzyRuleAntecedent *R3_Ante = new FuzzyRuleAntecedent(); 
+            R3_Ante->joinWithAND(good, coarse);
+            FuzzyRule *fuzzyRule3 = new FuzzyRule(3, R3_Ante, then_lower);
+
+            FuzzyRuleAntecedent *R4_Ante = new FuzzyRuleAntecedent(); 
+            R4_Ante->joinWithAND(hot, coarse);
+            FuzzyRule *fuzzyRule4 = new FuzzyRule(4, R4_Ante, then_off);
+
+
+            // --- Rows: rate IS cooldown ---
+            FuzzyRuleAntecedent *R9_Ante = new FuzzyRuleAntecedent(); 
+            R9_Ante->joinWithAND(colder, cooldown);
+            FuzzyRule *fuzzyRule9 = new FuzzyRule(9, R9_Ante, then_high);
+
+            FuzzyRuleAntecedent *R7_Ante = new FuzzyRuleAntecedent(); 
+            R7_Ante->joinWithAND(cold, cooldown);
+            FuzzyRule *fuzzyRule7 = new FuzzyRule(7, R7_Ante, then_mid);
+
+            FuzzyRuleAntecedent *R6_Ante = new FuzzyRuleAntecedent(); 
+            R6_Ante->joinWithAND(good, cooldown);
+            FuzzyRule *fuzzyRule6 = new FuzzyRule(6, R6_Ante, then_low);
+
+            FuzzyRuleAntecedent *R5_Ante = new FuzzyRuleAntecedent(); 
+            R5_Ante->joinWithAND(hot, cooldown);
+            FuzzyRule *fuzzyRule5 = new FuzzyRule(5, R5_Ante, then_lower);
+
+
+            // ===================================================================
+            // 4. ADD ALL RULES TO THE FUZZY OBJECT
+            // ===================================================================
+
+            fuzzy->addFuzzyRule(fuzzyRule1);
+            fuzzy->addFuzzyRule(fuzzyRule2);
+            fuzzy->addFuzzyRule(fuzzyRule3);
+            fuzzy->addFuzzyRule(fuzzyRule4);
+            fuzzy->addFuzzyRule(fuzzyRule5);
+            fuzzy->addFuzzyRule(fuzzyRule6);
+            fuzzy->addFuzzyRule(fuzzyRule7);
+            fuzzy->addFuzzyRule(fuzzyRule8);
+            fuzzy->addFuzzyRule(fuzzyRule9);
+            fuzzy->addFuzzyRule(fuzzyRule10);
+            fuzzy->addFuzzyRule(fuzzyRule11);
+            fuzzy->addFuzzyRule(fuzzyRule12);
+
+external_components:
+  - source: github://kodi1/esphome_fuzzy
+    components: [fuzzy_logic]
+
+logger:
+  level: VERBOSE
+  initial_level: DEBUG
+  logs:
+    fuzzy_logic: VERBOSE
+    fuzzy: VERBOSE
+
+ota:
+  - platform: web_server
+  - platform: esphome
+
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+  min_auth_mode: WPA2
+  fast_connect: true
+
+web_server:
+  include_internal: true
+  port: 80
+  version: 3
+
+number:
+  - platform: template
+    id: target_temperature
+    min_value: 40.0
+    max_value: 200.0
+    step: 1
+    initial_value: 100.0
+    optimistic: true
+
+  - platform: template
+    id: current_temperature
+    min_value: 80.0
+    max_value: 120.0
+    step: 1
+    initial_value: 90.0
+    optimistic: true
+
+  - platform: template
+    id: speed_temperature
+    min_value: -2.0
+    max_value: 2.0
+    step: 0.1
+    initial_value: 0.0
+    optimistic: true
+
+sensor:
+  - platform: template
+    id: fuzzy_sens
+    lambda: |-
+      float output, target, rate;
+      auto fuzzy = id(fuzzy_controller).get();
+      if (!fuzzy)
+          ESP_LOGE("fuzzy", "Fuzzy is not created");
+     
+      rate = id(speed_temperature).state;
+      ESP_LOGV("fuzzy", "Fuzzy input 1 %.2f", rate);
+      fuzzy->setInput(1, rate);
+
+      target = id(current_temperature).state -
+                id(target_temperature).state;
+      ESP_LOGV("fuzzy", "Fuzzy input 2 %.2f", target);
+      fuzzy->setInput(2, target);
+
+      fuzzy->fuzzify();
+
+      output = fuzzy->defuzzify(1);
+      
+      ESP_LOGV("fuzzy", "Fuzzy output: %f", output);
+      return output;
+
+    update_interval: 1s
+
+output:
+  - platform: template
+    id: heater_output
+    type: float
+    write_action:
+      - lambda: |-
+          return;
+
+fuzzy_logic:
+  id: fuzzy_controller

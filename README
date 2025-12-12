@@ -1,0 +1,2 @@
+Fuzzy Logic Temperature Controller (test-fuzzy)
+This configuration implements a fuzzy logic controller (FLC) within ESPHome using the eFLL (embedded Fuzzy Logic Library) to manage a heating element. The FLC provides robust, non-linear control of the temperature based on the error (difference from target) and the rate of change of the temperature.
