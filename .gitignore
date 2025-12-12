@@ -1,0 +1,12 @@
+# ESPHome / PlatformIO build artifacts
+.pioenvs/
+.vscode/
+.git/
+build/
+__pycache__/
+
+# ESPHome secrets
+secrets.yaml
+
+# ESPHome/Python logs
+*.log

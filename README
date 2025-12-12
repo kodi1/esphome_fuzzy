@@ -1,0 +1,215 @@
+ESPHome External Components
+Fuzzy Logic Controller & MLX90640 Thermal Camera
+
+This repository provides custom ESPHome external components for building advanced ESP32-based devices such as:
+
+Intelligent fuzzy-logic temperature controllers
+
+Thermal camera systems with real-time heatmap rendering on LVGL displays
+
+The components integrate directly into ESPHome using external_components and are intended for advanced automation, control, and visualization projects.
+
+Components
+fuzzy_logic
+
+A wrapper around the eFLL (Embedded Fuzzy Logic Library) that exposes a fuzzy controller object to ESPHome lambdas.
+
+Features
+
+Multiple fuzzy inputs and outputs
+
+Arbitrary fuzzy sets and rules
+
+Runtime fuzzification and defuzzification
+
+Ideal for smooth control (heaters, fans, motors, power control)
+
+The component does not create sensors or outputs by itself.
+All interaction is done via lambdas.
+
+mlx90640
+
+External component for the MLX90640 32×24 infrared thermal camera.
+
+Features
+
+Access to raw thermal pixel data
+
+Built-in min / max / mean / median temperature sensors
+
+Designed for thermal image generation
+
+Optimized for LVGL-based displays
+
+Installation
+
+Add the components using ESPHome external_components:
+
+external_components:
+  - source:
+      type: local
+      path: components
+    components:
+      - fuzzy_logic
+      - mlx90640
+
+
+You may also reference the repository directly from GitHub.
+
+MLX90640 Thermal Camera Example (LVGL Heatmap)
+
+This example shows how to render a live thermal image using LVGL.
+
+Add the Thermal Sensor
+mlx90640:
+  id: termal
+  i2c_id: ext_bus
+  update_interval: 500ms
+  address: 0x33
+  refresh_rate: 0x05   # 0x05 = 16Hz, 0x04 = 8Hz, 0x03 = 4Hz
+
+  min_temperature:
+    id: min_temp
+  max_temperature:
+    id: max_temp
+  median_temperature:
+    id: mdian_temp
+  mean_temperature:
+    id: mean_temp
+
+LVGL Image Placeholder
+lvgl:
+  pages:
+    - id: main_page
+      widgets:
+        - image:
+            id: thermal_img
+            src: boot_image
+            width: 100%
+            height: 100%
+            align: center
+            scrollable: false
+
+Periodic Heatmap Update
+interval:
+  - interval: 1s
+    then:
+      - lambda: |-
+          generate_heat_map();
+
+Heatmap Generation (Project Include)
+
+Add the following code to a project include file (for example heatmap.h).
+
+Ironbow Color Palette
+static const uint16_t ironbow[256] = {
+  /* palette data */
+};
+
+Heatmap Rendering Function
+void generate_heat_map(void)
+{
+    if (nullptr == heatmap_buf)
+        return;
+
+    float *raw_temps = nullptr;
+    if (!termal->get_raw_pixels(&raw_temps))
+        return;
+
+    const uint16_t *col_map = ironbow;
+
+    float min_t = id(min_temp).state;
+    float max_t = id(max_temp).state;
+    float inv_range = (max_t != min_t) ? (255.0f / (max_t - min_t)) : 0.0f;
+
+    for (int y = 0; y < out_h; y++) {
+        for (int x = 0; x < out_w; x++) {
+
+            float gy = x * (23.0f / (out_w - 1));
+            float gx = y * (31.0f / (out_h - 1));
+
+            int x0 = (int)gx;
+            int x1 = (x0 < 31) ? x0 + 1 : 31;
+            float dx = gx - x0;
+
+            int y0 = (int)gy;
+            int y1 = (y0 < 23) ? y0 + 1 : 23;
+            float dy = gy - y0;
+
+            float p00 = raw_temps[y0 * 32 + x0];
+            float p10 = raw_temps[y0 * 32 + x1];
+            float p01 = raw_temps[y1 * 32 + x0];
+            float p11 = raw_temps[y1 * 32 + x1];
+
+            float temp = p00 * (1.0f - dx) * (1.0f - dy) +
+                         p10 * dx * (1.0f - dy) +
+                         p01 * (1.0f - dx) * dy +
+                         p11 * dx * dy;
+
+            int color_idx = (int)((temp - min_t) * inv_range);
+            if (color_idx < 0) color_idx = 0;
+            if (color_idx > 255) color_idx = 255;
+
+            uint16_t c = col_map[color_idx];
+            heatmap_buf[y * out_w + x] = (c << 8) | (c >> 8);
+        }
+    }
+
+    termal->put_raw_pixels();
+    lv_obj_invalidate(thermal_img);
+}
+
+Fuzzy Logic Controller Example
+
+This example shows a multi-input fuzzy heater controller.
+
+ESP-IDF Configuration (Recommended)
+esp32:
+  board: wemos_d1_mini32
+  framework:
+    type: esp-idf
+
+Declare the Fuzzy Controller
+fuzzy_logic:
+  id: fuzzy_controller
+
+Configure Fuzzy Logic on Boot
+
+All fuzzy sets, inputs, outputs, and rules are defined once at startup:
+
+esphome:
+  on_boot:
+    - priority: 300
+      then:
+        - lambda: |-
+            auto fuzzy = id(fuzzy_controller).get();
+            ESP_LOGV("fuzzy", "boot fuzzy: %#p", fuzzy);
+
+Feed Inputs and Compute Output
+sensor:
+  - platform: template
+    id: fuzzy_sens
+    lambda: |-
+      auto fuzzy = id(fuzzy_controller).get();
+
+      float rate = id(speed_temperature).state;
+      float target = id(current_temperature).state -
+                     id(target_temperature).state;
+
+      fuzzy->setInput(1, rate);
+      fuzzy->setInput(2, target);
+
+      fuzzy->fuzzify();
+      return fuzzy->defuzzify(1);
+    update_interval: 1s
+
+Use the Output
+output:
+  - platform: template
+    id: heater_output
+    type: float
+
+Summary
+Component	Purpose	Result
+mlx90640	Thermal imaging	Live heatmap + statistics
+fuzzy_logic	Intelligent control logic	Smooth adaptive output
